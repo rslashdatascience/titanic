@@ -48,7 +48,7 @@ combined<-combined[, Age := impute.mean(Age), by = Title]
 combined$FamilySize<-combined$SibSp+combined$Parch
 
 #Throwing away variables we're not going to use
-combined<-combined[,c(2,3,5,6,7,8,10,12,13,14,16)]
+combined<-combined[,c(1,2,3,5,6,7,8,10,12,13,14,16)]
 
 #Convert from character vectors to factors
 combined$Embarked<-as.factor(combined$Embarked)
@@ -61,41 +61,82 @@ summary(combined)
 which(is.na(combined$Embarked))
 combined$Embarked[c(480,1248)] = 'S'
 
-
-#Split out into training and test sets
-combined<-data.frame(combined)
-test_imputed<-combined[combined$Mask=='Test',c(1:8,10,11)]
-train_imputed<-combined[combined$Mask=='Train',c(1:8,10,11)]
-
 #Looking for NAs
 summary(train_imputed)
+
 #They are in the Title variable
+missing_titles<-which(is.na(combined$Title))
 
-#The next few sections are not completed yet.
+#Convert Title from factor to character
+combined$Title<-as.character(combined$Title)
+combined$Title[missing_titles]='Missing'
 
-counts=xtabs(~Survived + Title, train_imputed)
-barplot(counts, main="Survival by Title", xlab="Title")
+#Also in fare
+combined$Fare[is.na(combined$Fare)]=mean(combined$Fare, na.rm=TRUE)
+#Split out into training and test sets
+combined<-data.frame(combined)
+#Convert back to factor
+combined$Title<-as.factor(combined$Title)
 
-#Two ideas: 1. Find the average age of each Title, then impute NAs based on those and Gender. 2. Keep NA as a separate
-#group
+test_imputed<-combined[combined$Mask=='Test',c(1:9,11,12)]
+train_imputed<-combined[combined$Mask=='Train',c(1:9,11,12)]
+
+
+#Two ideas: 1. Find the average age of each Title, then impute NAs based on those and Gender. 
+#2. Keep NA as a separate group
+#I'm going with keeping NA as a separate group for now
 
 #Check this
-counts2<-table(train_imputed$Survived, train_imputed$Title)
+counts<-table(train_imputed$Survived, train_imputed$Title)
+barplot(counts, legend=rownames(counts), beside=TRUE, main="Survival by Title")
 
-barplot(counts2, legend=rownames(counts), beside=TRUE)
+counts<-table(train_imputed$Survived, train_imputed$FamilySize)
+barplot(counts, legend=rownames(counts), beside=TRUE, main="Survival by Family Size")
 
-
+#Random Forest
 library(randomForest)
 
 set.seed(0)
 
-fit <-randomForest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + FamilySize + Title,
+fit <-randomForest(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + FamilySize + Title,
                    data=train_imputed,
                    importance=TRUE,
                    ntree=2000)
 
-#Figuring out which Titles are NAs
-which(is.na(train$Title))
+#Now predicting
+prediction <- predict(fit, test_imputed)
+submission<-data.frame(PassengerID=test_imputed$PassengerId, Survived=prediction)
+write.csv(submission, file="firstforestinR.csv", row.names=FALSE)
+
+#Logistic Regression?
+fit<-glm(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + FamilySize + Title,
+         data=train_imputed,
+         family=binomial(link='logit'))
+
+#Now predicting
+prediction <- predict(fit, test_imputed)
+submission<-data.frame(PassengerID=test_imputed$PassengerId, Survived=prediction)
+write.csv(submission, file="firstforestinR.csv", row.names=FALSE)
+
+#STill resulting in about 80% accuracy.  Next thing to try: Extract family names and create a variable for each family
+#with >2 people
+
+#SVM?
+library(e1071)
+
+fit<-svm(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + FamilySize + Title,
+         data=train_imputed)
+
+#Now predicting
+#Changing test_imputed's NAs to 0s so the prediction will run
+test_imputed$Survived[which(is.na(test_imputed$Survived))]=0
+prediction <- predict(fit, test_imputed)
+submission<-data.frame(PassengerID=test_imputed$PassengerId, Survived=prediction)
+write.csv(submission, file="firstforestinR.csv", row.names=FALSE)
+
+prediction<-predict(fit, train_imputed)
+table(prediction, train_imputed$Survived)
+
 
 
 #Creating a correlation matrix
